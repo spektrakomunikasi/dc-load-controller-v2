@@ -1,0 +1,33 @@
+Row 1 (20 chars):
+┌────────────────────┐
+│V:12.5V I:15.3A F:50%│
+└────────────────────┘
+
+Row 2 (20 chars):
+┌────────────────────┐
+│Temp:65.2C Pow:192W │
+└────────────────────┘
+
+Row 3 (20 chars):
+┌────────────────────┐
+│Stat:OK   Y:OFF R:OFF│
+└────────────────────┘
+
+Row 4 (20 chars):
+┌────────────────────┐
+│T:OK PWM:128 OVP:OFF │
+└────────────────────┘
+
+COMPLETE INFORMATION:
+✅ Voltage (V)
+✅ Current (I)
+✅ Fan Speed (%)
+✅ Temperature (°C)
+✅ Power (W)
+✅ Status (OK/WARNING/CRITICAL)
+✅ Yellow LED (OFF/BLK/ON)
+✅ Red LED (OFF/BLK/ON)
+✅ Temperature Warning (T:OK/WARM/CRIT)
+✅ PWM Value (0-255)
+✅ Overvoltage Protection (ON/OFF)
+✅ System Mode (NORMAL/FAN_ON/SHUTDOWN)
