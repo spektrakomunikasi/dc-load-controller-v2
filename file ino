@@ -1,4 +1,147 @@
-// ... (semua code sama seperti sebelumnya, hanya update bagian ini)
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// ===== LCD Configuration =====
+LiquidCrystal_I2C lcd(0x27, 20, 4);
+
+// ===== Pin Definitions =====
+#define BUZZER_PIN 2
+#define TEMP_SENSOR_PIN 4
+#define MOSFET_PIN 5
+#define FAN_PIN 3
+#define YELLOW_LED_PIN 6
+#define RED_LED_PIN 7
+#define POT_PIN A0
+#define CURRENT_SENSE_PIN A1
+#define VOLTAGE_SENSE_PIN A2
+
+// ===== OneWire & Temperature Sensor =====
+OneWire oneWire(TEMP_SENSOR_PIN);
+DallasTemperature sensors(&oneWire);
+
+// ===== Calibration Constants =====
+const float REF_VOLTAGE = 5.0;
+const int ADC_RESOLUTION = 1024;
+const float SHUNT_RESISTOR = 0.1;
+const float VOLTAGE_DIVIDER_RATIO = 5.0;
+const float MAX_CURRENT = 50.0;
+const float MAX_VOLTAGE = 25.0;
+const float OVERVOLTAGE_THRESHOLD = 26.0;
+
+// ===== Temperature Thresholds =====
+const float TEMP_FAN_START = 45.0;
+const float TEMP_WARNING = 70.0;
+const float TEMP_CRITICAL = 90.0;
+
+// ===== System Variables =====
+float measuredVoltage = 0.0;
+float measuredCurrent = 0.0;
+float measuredTemp = 0.0;
+int mosfetPWM = 0;
+int fanPWM = 0;
+boolean systemShutdown = false;
+boolean overvoltageTriggered = false;
+boolean blinkState = false;
+
+// ===== Timers =====
+unsigned long blinkTimer = 0;
+unsigned long sensorReadTimer = 0;
+unsigned long lcdUpdateTimer = 0;
+const unsigned long SENSOR_INTERVAL = 500;
+const unsigned long LCD_UPDATE_INTERVAL = 1000;
+const unsigned long BLINK_INTERVAL = 500;
+
+// ===== Status Strings =====
+const char *temperatureStatus[] = {"OK", "WARM", "CRIT"};
+
+// ===== Enum Definitions =====
+enum SystemStatus { STATUS_OK, STATUS_WARN, STATUS_CRITICAL };
+enum LEDState { LED_OFF, LED_BLINK, LED_ON };
+enum TemperatureStatus { TEMP_OK, TEMP_WARM, TEMP_CRIT };
+
+// ===== State Variables =====
+SystemStatus currentStatus = STATUS_OK;
+LEDState yellowLEDState = LED_OFF;
+LEDState redLEDState = LED_OFF;
+TemperatureStatus tempStatus = TEMP_OK;
+
+void setup() {
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(MOSFET_PIN, OUTPUT);
+  pinMode(FAN_PIN, OUTPUT);
+  pinMode(YELLOW_LED_PIN, OUTPUT);
+  pinMode(RED_LED_PIN, OUTPUT);
+
+  Serial.begin(9600);
+  delay(2000);
+  
+  Serial.println("\n===== DC LOAD V2 - FINAL =====\n");
+  Serial.println("Initializing I2C...");
+  Wire.begin();
+  delay(500);
+
+  Serial.println("Initializing LCD 20x4 at 0x27...");
+  lcd.init();
+  delay(1500);
+  
+  lcd.backlight();
+  delay(1500);
+  
+  lcd.clear();
+  delay(1500);
+
+  Serial.println("LCD Ready!");
+
+  displaySplash1();
+  delay(3000);
+  
+  displaySplash2();
+  delay(3000);
+  
+  lcd.clear();
+  delay(1000);
+
+  sensors.begin();
+  Serial.println("Temperature Sensor Ready!");
+  Serial.println("System Ready!\n");
+
+  digitalWrite(YELLOW_LED_PIN, LOW);
+  digitalWrite(RED_LED_PIN, LOW);
+  digitalWrite(BUZZER_PIN, LOW);
+  analogWrite(MOSFET_PIN, 0);
+  analogWrite(FAN_PIN, 0);
+
+  sensorReadTimer = millis();
+  lcdUpdateTimer = millis();
+  blinkTimer = millis();
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  if (currentMillis - sensorReadTimer >= SENSOR_INTERVAL) {
+    readAllSensors();
+    sensorReadTimer = currentMillis;
+  }
+
+  updateSystemStatus();
+  detectOvervoltage();
+  updateTemperatureStatus();
+  handleTemperatureIndicators();
+  controlCoolingFan();
+  controlMOSFET();
+
+  if (currentMillis - lcdUpdateTimer >= LCD_UPDATE_INTERVAL) {
+    updateLCDDisplay();
+    lcdUpdateTimer = currentMillis;
+  }
+
+  debugSerialOutput();
+  
+  delay(20);
+}
 
 void readAllSensors() {
   int potValue = analogRead(POT_PIN);
@@ -21,49 +164,220 @@ void readAllSensors() {
   if (measuredVoltage > MAX_VOLTAGE + 2.0) measuredVoltage = MAX_VOLTAGE + 2.0;
   if (measuredVoltage < 0.0) measuredVoltage = 0.0;
 
-  // ===== TEMPERATURE READ WITH VALIDATION =====
   sensors.requestTemperatures();
   float tempRead = sensors.getTempCByIndex(0);
   
-  // PENTING: Validate temperature reading
-  // Valid range: -55°C to +125°C untuk DS18B20
-  // Jika di luar range atau 0.0 = sensor error
-  if (tempRead > -55.0 && tempRead < 125.0 && tempRead != 85.0) {
+  if (tempRead > -100.0 && tempRead < 150.0) {
     measuredTemp = tempRead;
-  } else {
-    // Jika tidak valid, gunakan 25.0C default (safe)
-    // atau biarkan 0.0 untuk debug
-    Serial.println("WARNING: Temperature sensor reading invalid!");
-    Serial.print("Raw temp: ");
-    Serial.println(tempRead);
   }
 }
 
-// ===== Add this function untuk test sensor =====
-void testTemperatureSensor() {
-  Serial.println("\n=== Temperature Sensor Test ===");
-  Serial.print("Device count: ");
-  Serial.println(sensors.getDeviceCount());
+void detectOvervoltage() {
+  if (measuredVoltage > OVERVOLTAGE_THRESHOLD) {
+    overvoltageTriggered = true;
+  } else if (measuredVoltage < (OVERVOLTAGE_THRESHOLD - 1.0)) {
+    overvoltageTriggered = false;
+  }
+}
+
+void updateTemperatureStatus() {
+  if (measuredTemp < TEMP_WARNING) {
+    tempStatus = TEMP_OK;
+  } else if (measuredTemp < TEMP_CRITICAL) {
+    tempStatus = TEMP_WARM;
+  } else {
+    tempStatus = TEMP_CRIT;
+  }
+}
+
+void updateSystemStatus() {
+  if (systemShutdown) {
+    currentStatus = STATUS_CRITICAL;
+    redLEDState = LED_ON;
+    yellowLEDState = LED_OFF;
+  } else if (measuredTemp >= TEMP_WARNING && measuredTemp < TEMP_CRITICAL) {
+    currentStatus = STATUS_WARN;
+    yellowLEDState = LED_BLINK;
+    redLEDState = LED_OFF;
+  } else if (measuredTemp >= TEMP_CRITICAL) {
+    systemShutdown = true;
+    currentStatus = STATUS_CRITICAL;
+    redLEDState = LED_ON;
+    yellowLEDState = LED_OFF;
+  } else {
+    currentStatus = STATUS_OK;
+    yellowLEDState = LED_OFF;
+    redLEDState = LED_OFF;
+  }
+}
+
+void handleTemperatureIndicators() {
+  unsigned long currentMillis = millis();
+
+  if (yellowLEDState == LED_BLINK) {
+    if (currentMillis - blinkTimer > BLINK_INTERVAL) {
+      blinkState = !blinkState;
+      blinkTimer = currentMillis;
+    }
+    digitalWrite(YELLOW_LED_PIN, blinkState ? HIGH : LOW);
+  } else if (yellowLEDState == LED_ON) {
+    digitalWrite(YELLOW_LED_PIN, HIGH);
+  } else {
+    digitalWrite(YELLOW_LED_PIN, LOW);
+  }
+
+  if (redLEDState == LED_ON) {
+    digitalWrite(RED_LED_PIN, HIGH);
+  } else if (redLEDState == LED_BLINK) {
+    if (currentMillis - blinkTimer > BLINK_INTERVAL) {
+      blinkState = !blinkState;
+      blinkTimer = currentMillis;
+    }
+    digitalWrite(RED_LED_PIN, blinkState ? HIGH : LOW);
+  } else {
+    digitalWrite(RED_LED_PIN, LOW);
+  }
+
+  if (currentStatus == STATUS_CRITICAL) {
+    digitalWrite(BUZZER_PIN, HIGH);
+  } else {
+    digitalWrite(BUZZER_PIN, LOW);
+  }
+}
+
+void controlCoolingFan() {
+  if (measuredTemp < TEMP_FAN_START) {
+    fanPWM = 0;
+  } else if (measuredTemp < TEMP_WARNING) {
+    fanPWM = map(measuredTemp * 10, TEMP_FAN_START * 10, TEMP_WARNING * 10, 0, 128);
+  } else if (measuredTemp < TEMP_CRITICAL) {
+    fanPWM = map(measuredTemp * 10, TEMP_WARNING * 10, TEMP_CRITICAL * 10, 128, 255);
+  } else {
+    fanPWM = 255;
+  }
+
+  analogWrite(FAN_PIN, fanPWM);
+}
+
+void controlMOSFET() {
+  if (systemShutdown || overvoltageTriggered) {
+    analogWrite(MOSFET_PIN, 0);
+  } else {
+    analogWrite(MOSFET_PIN, mosfetPWM);
+  }
+}
+
+void displaySplash1() {
+  lcd.clear();
+  delay(1000);
   
-  if (sensors.getDeviceCount() == 0) {
-    Serial.println("ERROR: No temperature sensor detected!");
-    Serial.println("Check:");
-    Serial.println("1. Yellow wire connected to D4");
-    Serial.println("2. Black wire connected to GND");
-    Serial.println("3. Red wire connected to +5V");
-    Serial.println("4. 4.7k resistor from D4 to +5V (PULL-UP)");
-  } else {
-    Serial.println("OK: Temperature sensor detected!");
-    
-    // Read temperature
-    sensors.requestTemperatures();
-    float temp = sensors.getTempCByIndex(0);
-    Serial.print("Temperature reading: ");
-    Serial.print(temp);
-    Serial.println("C");
-  }
-  Serial.println("============================\n");
+  lcd.setCursor(0, 0);
+  lcd.print("  DC LOAD TEST V2   ");
+  delay(300);
+  
+  lcd.setCursor(0, 1);
+  lcd.print("                    ");
+  delay(300);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("BY SPEKTRA KOMUNIKASI");
+  delay(300);
+  
+  lcd.setCursor(0, 3);
+  lcd.print("    Loading...      ");
+  delay(300);
 }
 
-// Add call di setup():
-// testTemperatureSensor();
+void displaySplash2() {
+  lcd.clear();
+  delay(1000);
+  
+  lcd.setCursor(0, 0);
+  lcd.print("50A / 25V / Temp OK ");
+  delay(300);
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Fan Control Ready   ");
+  delay(300);
+  
+  lcd.setCursor(0, 2);
+  lcd.print("OVP: YES - Zener 5V1");
+  delay(300);
+  
+  lcd.setCursor(0, 3);
+  lcd.print("System Ready!       ");
+  delay(300);
+}
+
+void updateLCDDisplay() {
+  float powerWatts = measuredVoltage * measuredCurrent;
+  int fanPercent = (fanPWM / 255.0) * 100;
+
+  lcd.clear();
+
+  // ROW 0: V, I, F
+  lcd.setCursor(0, 0);
+  lcd.print("V:");
+  if (measuredVoltage < 10) lcd.print(" ");
+  lcd.print(measuredVoltage, 1);
+  lcd.print("  I:");
+  if (measuredCurrent < 10) lcd.print(" ");
+  lcd.print(measuredCurrent, 1);
+  lcd.print("  F:");
+  if (fanPercent < 10) lcd.print(" ");
+  if (fanPercent < 100) lcd.print(" ");
+  lcd.print(fanPercent);
+  lcd.print("%");
+
+  // ROW 1: Temp, Power
+  lcd.setCursor(0, 1);
+  lcd.print("Temp:");
+  if (measuredTemp < 10) lcd.print(" ");
+  if (measuredTemp < 100) lcd.print(" ");
+  lcd.print(measuredTemp, 1);
+  lcd.print("  Pow:");
+  if (powerWatts < 100) lcd.print("  ");
+  if (powerWatts < 1000) lcd.print(" ");
+  lcd.print((int)powerWatts);
+  lcd.print("W");
+
+  // ROW 2: Temp Status
+  lcd.setCursor(0, 2);
+  lcd.print("Temp Status: ");
+  lcd.print(temperatureStatus[tempStatus]);
+
+  // ROW 3: PWM
+  lcd.setCursor(0, 3);
+  lcd.print("PWM Value: ");
+  if (mosfetPWM < 10) lcd.print("  ");
+  if (mosfetPWM < 100) lcd.print(" ");
+  lcd.print(mosfetPWM);
+}
+
+void debugSerialOutput() {
+  static unsigned long lastPrint = 0;
+  if (millis() - lastPrint > 2000) {
+    lastPrint = millis();
+    
+    Serial.print("V:");
+    Serial.print(measuredVoltage, 2);
+    Serial.print("V I:");
+    Serial.print(measuredCurrent, 2);
+    Serial.print("A T:");
+    Serial.print(measuredTemp, 1);
+    Serial.print("C P:");
+    Serial.print((int)(measuredVoltage * measuredCurrent));
+    Serial.print("W F:");
+    Serial.print((fanPWM/255.0)*100, 0);
+    Serial.print("% TempSta:");
+    Serial.print(temperatureStatus[tempStatus]);
+    Serial.print(" PWM:");
+    Serial.print(mosfetPWM);
+    Serial.print(" YLed:");
+    Serial.print(yellowLEDState);
+    Serial.print(" RLed:");
+    Serial.print(redLEDState);
+    Serial.print(" OVP:");
+    Serial.println(overvoltageTriggered ? "ON" : "OFF");
+  }
+}
