@@ -280,7 +280,7 @@ void displaySplash1() {
   delay(300);
   
   lcd.setCursor(0, 2);
-  lcd.print("BY SPEKTRA KOMUNIKASI");
+  lcd.print(" SPEKTRA KOMUNIKASI");
   delay(300);
   
   lcd.setCursor(0, 3);
@@ -323,28 +323,29 @@ void updateLCDDisplay() {
   lcd.print("  I:");
   if (measuredCurrent < 10) lcd.print(" ");
   lcd.print(measuredCurrent, 1);
-  lcd.print("  F:");
-  if (fanPercent < 10) lcd.print(" ");
-  if (fanPercent < 100) lcd.print(" ");
-  lcd.print(fanPercent);
-  lcd.print("%");
+  
 
   // ROW 1: Temp, Power
-  lcd.setCursor(0, 1);
-  lcd.print("Temp:");
-  if (measuredTemp < 10) lcd.print(" ");
-  if (measuredTemp < 100) lcd.print(" ");
-  lcd.print(measuredTemp, 1);
-  lcd.print("  Pow:");
-  if (powerWatts < 100) lcd.print("  ");
-  if (powerWatts < 1000) lcd.print(" ");
-  lcd.print((int)powerWatts);
+  lcd.setCursor(0, 1);  
+  lcd.print("Temp:");  
+  if (measuredTemp < 10) lcd.print(" ");  
+  if (measuredTemp < 100) lcd.print(" ");  
+  lcd.print(measuredTemp, 1);  
+  lcd.print("  P:");  
+  if (powerWatts < 100) lcd.print("  ");  
+  if (powerWatts < 1000) lcd.print(" ");  
+  lcd.print((int)powerWatts);  
   lcd.print("W");
 
   // ROW 2: Temp Status
   lcd.setCursor(0, 2);
-  lcd.print("Temp Status: ");
+  lcd.print("T:");
   lcd.print(temperatureStatus[tempStatus]);
+  lcd.print("    F:");  // Extra spaces for width
+  if (fanPercent < 10) lcd.print(" ");
+  if (fanPercent < 100) lcd.print(" ");
+  lcd.print(fanPercent);
+  lcd.print("%");
 
   // ROW 3: PWM
   lcd.setCursor(0, 3);
